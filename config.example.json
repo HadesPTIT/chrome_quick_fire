@@ -1,0 +1,16 @@
+{
+  "tabs": [
+    {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "url": "https://your-first-url.com",
+      "profile": "Default",
+      "layout": "top-left"
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "url": "https://your-second-url.com",
+      "profile": "Default",
+      "layout": "top-right"
+    }
+  ]
+}
