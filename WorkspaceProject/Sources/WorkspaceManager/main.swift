@@ -112,7 +112,7 @@ struct TabItem: Identifiable, Codable, Equatable {
     var layout: Layout = .topLeft
     var screenIndex: Int = 0  // 0 = primary screen
 
-    // Custom decode để backward-compatible với data cũ chưa có screenIndex
+    // Custom decoder for backward compatibility — old data without screenIndex decodes to 0
     init(id: UUID = UUID(), url: String = "", profile: String = "Default",
          layout: Layout = .topLeft, screenIndex: Int = 0) {
         self.id = id; self.url = url; self.profile = profile
@@ -127,7 +127,7 @@ struct TabItem: Identifiable, Codable, Equatable {
         url         = try c.decode(String.self, forKey: .url)
         profile     = try c.decode(String.self, forKey: .profile)
         layout      = try c.decode(Layout.self, forKey: .layout)
-        screenIndex = (try? c.decode(Int.self,  forKey: .screenIndex)) ?? 0  // fallback
+        screenIndex = (try? c.decode(Int.self,  forKey: .screenIndex)) ?? 0  // missing key → default 0
     }
 }
 
@@ -195,7 +195,7 @@ class TabsViewModel: ObservableObject {
 struct TabRowView: View {
     @Binding var tab: TabItem
 
-    /// Danh sách màn hình hiện có, lấy thực tế từ NSScreen
+    /// Available screens, populated live from NSScreen
     private var availableScreens: [(index: Int, label: String)] {
         NSScreen.screens.enumerated().map { i, screen in
             let res = "\(Int(screen.frame.width))×\(Int(screen.frame.height))"
@@ -204,46 +204,65 @@ struct TabRowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: tab.layout.icon)
-                    .foregroundColor(.accentColor)
-                    .frame(width: 20)
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: tab.layout.icon)
+                        .foregroundColor(.accentColor)
+                        .frame(width: 20)
 
-                TextField("https://example.com", text: $tab.url)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
+                    TextField("https://example.com", text: $tab.url)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.body, design: .monospaced))
 
-                Picker("", selection: $tab.layout) {
-                    ForEach(Layout.allCases) { layout in
-                        Label(layout.displayName, systemImage: layout.icon)
-                            .tag(layout)
+                    Picker("", selection: $tab.layout) {
+                        ForEach(Layout.allCases) { layout in
+                            Label(layout.displayName, systemImage: layout.icon)
+                                .tag(layout)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .frame(width: 160)
                 }
-                .pickerStyle(.menu)
-                .frame(width: 160)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "person.circle")
+                        .foregroundColor(.secondary)
+                        .frame(width: 20)
+                    TextField("Chrome Profile (e.g. Default, Profile 1, Profile 17)", text: $tab.profile)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+
+                    Image(systemName: "display")
+                        .foregroundColor(.secondary)
+                    Picker("", selection: $tab.screenIndex) {
+                        ForEach(availableScreens, id: \.index) { screen in
+                            Text(screen.label).tag(screen.index)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(minWidth: 160)
+                    .help("Select the screen for this tab")
+                }
             }
 
-            HStack(spacing: 8) {
-                Image(systemName: "person.circle")
-                    .foregroundColor(.secondary)
-                    .frame(width: 20)
-                TextField("Chrome Profile (e.g. Default, Profile 1, Profile 17)", text: $tab.profile)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.caption)
-
-                // Screen picker — tự detect màn hình đang kết nối
-                Image(systemName: "display")
-                    .foregroundColor(.secondary)
-                Picker("", selection: $tab.screenIndex) {
-                    ForEach(availableScreens, id: \.index) { screen in
-                        Text(screen.label).tag(screen.index)
-                    }
+            Button {
+                AppDelegate.shared.runSingleTab(tab)
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(tab.url.trimmingCharacters(in: .whitespaces).isEmpty
+                              ? Color.gray.opacity(0.4) : Color.accentColor)
+                        .frame(width: 30, height: 30)
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .offset(x: 1)  // optical centering
                 }
-                .pickerStyle(.menu)
-                .frame(minWidth: 160)
-                .help("Chọn màn hình mở tab này")
             }
+            .buttonStyle(.plain)
+            .disabled(tab.url.trimmingCharacters(in: .whitespaces).isEmpty)
+            .help("Launch this tab")
         }
         .padding(.vertical, 4)
     }
@@ -384,7 +403,7 @@ struct SettingsView: View {
 }
 
 // MARK: - AppDelegate
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let shared = AppDelegate()
     var statusItem: NSStatusItem!
     var settingsWindow: NSWindow?
@@ -409,14 +428,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.toolTip = "Chrome Quickfire — Workspace Manager"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Launch Workspace", action: #selector(runWorkspaceFromMenu), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem(title: "Preferences…", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit Chrome Quickfire", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.delegate = self   // rebuild items each time the menu opens
         statusItem.menu = menu
     }
 
     @objc func runWorkspaceFromMenu() { runWorkspace() }
+
+    // MARK: - NSMenuDelegate: rebuild menu with current tabs
+    func menuWillOpen(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // ── Launch All ──
+        let allItem = NSMenuItem(title: "Launch Workspace", action: #selector(runWorkspaceFromMenu), keyEquivalent: "r")
+        allItem.image = NSImage(systemSymbolName: "rocket", accessibilityDescription: nil)
+        menu.addItem(allItem)
+
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Preferences…", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Quit Chrome Quickfire", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    @objc func runSingleTabFromMenu(_ sender: NSMenuItem) {
+        let tabs = loadTabs().filter { !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
+        let idx = sender.tag
+        guard idx >= 0, idx < tabs.count else { return }
+        runSingleTab(tabs[idx])
+    }
+
+    // MARK: - AppleScript helper
+    private func applescriptCommand(for tab: TabItem) -> String {
+        let screens = NSScreen.screens
+        let primaryHeight = Int(screens.first?.frame.height ?? 800)
+        let safeIdx = min(max(tab.screenIndex, 0), max(screens.count - 1, 0))
+        let frame = screens[safeIdx].frame
+        let sx = Int(frame.origin.x)
+        let sy = primaryHeight - Int(frame.origin.y) - Int(frame.height)
+        let sw = Int(frame.width)
+        let sh = Int(frame.height)
+        let bounds = tab.layout.computeBounds(screenX: sx, screenY: sy, screenWidth: sw, screenHeight: sh)
+        return """
+        do shell script "\\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\\" --profile-directory=\\"\(tab.profile)\\" --new-window \\"\(tab.url)\\" > /dev/null 2>&1 &"
+        delay 1.0
+        tell application \"Google Chrome\"
+            activate
+            set bounds of window 1 to \(bounds)
+        end tell
+        """
+    }
+
+    func runSingleTab(_ tab: TabItem) {
+        var error: NSDictionary?
+        if let script = NSAppleScript(source: applescriptCommand(for: tab)) {
+            script.executeAndReturnError(&error)
+            if let err = error { print("AppleScript error: \(err)") }
+        }
+    }
 
     @objc func openSettings() {
         if settingsWindow == nil {
@@ -436,38 +503,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func runWorkspace() {
         let tabs = loadTabs().filter { !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
         guard !tabs.isEmpty else { openSettings(); return }
-
-        let screens = NSScreen.screens
-        // Quartz Y=0 ở bottom-left; AppleScript Y=0 ở top-left của primary screen
-        let primaryHeight = Int(screens.first?.frame.height ?? 0)
-
-        var commands: [String] = []
-        for tab in tabs {
-            // Chắc chắn không out-of-bounds nếu màn hình bị unplug
-            let safeIdx = min(max(tab.screenIndex, 0), screens.count - 1)
-            let frame   = screens[safeIdx].frame
-
-            let sx = Int(frame.origin.x)
-            let sy = primaryHeight - Int(frame.origin.y) - Int(frame.height)  // flip Y
-            let sw = Int(frame.width)
-            let sh = Int(frame.height)
-
-            let bounds = tab.layout.computeBounds(screenX: sx, screenY: sy,
-                                                  screenWidth: sw, screenHeight: sh)
-
-            let cmd = """
-            do shell script "\\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\\" --profile-directory=\\"\(tab.profile)\\" --new-window \\"\(tab.url)\\" > /dev/null 2>&1 &"
-            delay 1.0
-            tell application "Google Chrome"
-                activate
-                set bounds of window 1 to \(bounds)
-            end tell
-            """
-            commands.append(cmd)
-        }
-
-        let scriptSource = commands.joined(separator: "\n\n")
-
+        let scriptSource = tabs.map { applescriptCommand(for: $0) }.joined(separator: "\n\n")
         var error: NSDictionary?
         if let script = NSAppleScript(source: scriptSource) {
             script.executeAndReturnError(&error)

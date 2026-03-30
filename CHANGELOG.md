@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.1.1] - 2026-03-30
+
+### Changed
+- Translated all Vietnamese comments, doc comments, and UI strings in `main.swift` to English
+  - Code comments: `TabItem` decoder, `NSMenuDelegate`, `applescriptCommand`, screen picker
+  - UI tooltip strings: screen picker help, per-tab launch button help
+  - Inline comments: optical centering offset, menu delegate setup
+
+### Changed Files
+
+| File | Change |
+|------|--------|
+| `main.swift` | All Vietnamese text → English |
+
+---
+
+## [1.1.0] - 2026-03-30
+
+### Added
+- **Chọn màn hình per-tab** — mỗi tab có thêm picker để chọn màn hình đích (Screen 1, Screen 2, ...); danh sách tự detect từ `NSScreen.screens` với tên và resolution thực tế
+- **Nút launch riêng per-tab** — mỗi hàng trong Preferences có nút tròn ▶ (xanh accent / xám nếu URL trống) để mở riêng tab đó không cần chạy cả workspace
+- **`runSingleTab(_:)`** — hàm mới trong `AppDelegate` để launch đúng 1 tab với đúng màn hình và layout
+- **`applescriptCommand(for:)`** — helper dùng chung cho cả `runSingleTab` và `runWorkspace`, loại bỏ code lặp
+
+### Fixed
+- **Multi-monitor layout sai màn hình** — AppleScript cũ dùng `Finder → bounds of window of desktop` luôn trả về primary screen; thay bằng tính bounds trong Swift từ `NSScreen.screens[screenIndex]` với flip Y-axis đúng (Quartz → AppleScript)
+- **Tab cũ bị mất sau update** — `TabItem` thiếu `screenIndex` khiến synthesized `Decodable` throw lỗi, toàn bộ UserDefaults load về `[]`; fix bằng custom `init(from:)` dùng `decodeIfPresent` fallback về `0`
+- **`config.json` không load được** — `loadConfigFile()` tìm file ở thư mục cha của `.app` trong khi `build.sh` copy vào `Contents/Resources/`; đổi sang `Bundle.main.url(forResource:withExtension:)`
+
+### Changed
+- **Menu bar gọn hơn** — bỏ per-tab items khỏi dropdown menu bar, chỉ giữ Launch Workspace / Preferences / Quit
+- **`NSMenuDelegate`** — menu bar rebuild động mỗi lần mở thay vì static items lúc khởi động
+- **`runWorkspace()`** refactor — dùng `applescriptCommand(for:)` thay vì inline code lặp
+- **Nút launch icon** — đổi sang hình tròn `Circle` + `play.fill` ở giữa
+
+### Changed Files
+
+| File | Thay đổi |
+|------|----------|
+| `main.swift` | Thêm `screenIndex` vào `TabItem`, custom `Decodable`, `computeBounds`, screen picker UI, circle launch button, `NSMenuDelegate`, `applescriptCommand`, `runSingleTab`, refactor `runWorkspace` |
+| `WorkspaceProject/Sources/WorkspaceManager/main.swift` | Sync từ `main.swift` |
+
+---
+
 ## [1.0.0] - 2026-03-30
 
 ### 🎉 Initial Release
